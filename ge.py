@@ -10,21 +10,11 @@ import logging
 import sys
 import os
 
-# Configure logging
-log_dir = "logs"
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-
-# Create timestamp for log filename
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(log_dir, f"dream11_generation_{timestamp}.log")
-
-# Configure logger
+# Configure logging to only use console, no log files
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.WARNING,  # Only show warnings and errors
+    format='%(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -43,66 +33,55 @@ TOTAL_PLAYERS = 11
 NUM_TEAMS_TO_GENERATE = 20  # Reduced from 20 to 5 for faster execution
 REQUEST_TIMEOUT = 10  # 5 second timeout for all web requests
 
+# Set this to False to disable debug prints
+ENABLE_DEBUG_OUTPUT = False
+
 def get_player_role(soup):
     """Determine player role based on URL or name"""
     try:
-
         role_element = soup.find("div", string="Role")
         if role_element:
             role = role_element.find_next("div").text.strip().lower()
-            logger.debug(f"Found role from webpage: {role}")
-            print(f"Found role from webpage: {role}")
+            if ENABLE_DEBUG_OUTPUT:
+                print(f"Found role from webpage: {role}")
 
             if "wk" in role or "keeper" in role:
-                logger.info(f"Determined role: WK")
                 return "WK"
             elif "all" in role:
-                logger.info(f"Determined role: AR")
                 return "AR"
             elif "bowl" in role:
-                logger.info(f"Determined role: BOWL")
                 return "BOWL"
             elif "bat" in role:
-                logger.info(f"Determined role: BAT")
                 return "BAT"
         
         # Fallback: determine role from URL
-        logger.debug("No role found on webpage, determining from URL")
         player_name = player_url.split('/')[-1].lower()
         name_hash = sum(ord(c) for c in player_name)
         
         # Distribute roles evenly
         role_num = name_hash % 10
         if role_num < 2:
-            logger.info(f"Determined role algorithmically: WK")
             return "WK"  # 20% wicket-keepers 
         elif role_num < 5:
-            logger.info(f"Determined role algorithmically: BAT")
             return "BAT"  # 30% batsmen
         elif role_num < 8:
-            logger.info(f"Determined role algorithmically: BOWL")
             return "BOWL"  # 30% bowlers
         else:
-            logger.info(f"Determined role algorithmically: AR")
             return "AR"  # 20% all-rounders
         
     except Exception as e:
-        logger.error(f"Error getting player role: {e}")
         # Fallback to algorithm
         player_name = player_url.split('/')[-1].lower()
         name_hash = sum(ord(c) for c in player_name)
         roles = ["BAT", "BOWL", "AR", "WK"]
         role = roles[name_hash % len(roles)]
-        logger.info(f"Using fallback role: {role}")
         return role
 
 def get_player_stats(player_url, team_mapping=None):
     """Get player stats with web scraping and fallback to random data"""
-    logger.info(f"Getting stats for player: {player_url}")
     start_time = time.time()
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        logger.debug(f"Sending request to: {player_url}")
         response = requests.get(player_url, headers=headers, timeout=REQUEST_TIMEOUT)
         
         soup = BeautifulSoup(response.content, "html.parser")
@@ -110,7 +89,6 @@ def get_player_stats(player_url, team_mapping=None):
         # Extract player name
         name_tag = soup.find("h1", class_="cb-font-40")
         name = name_tag.text.strip() if name_tag else player_url.split('/')[-1].replace('-', ' ').title()
-        logger.debug(f"Extracted player name: {name}")
         
         # Get player ID from URL for team mapping
         player_id = player_url.split('/')[-1]
@@ -118,19 +96,15 @@ def get_player_stats(player_url, team_mapping=None):
         # Extract team information - try various selectors or use mapping
         if team_mapping and player_id in team_mapping:
             team = team_mapping[player_id]
-            logger.debug(f"Using team mapping for {name}: {team}")
         else:
             team_info = soup.find("div", class_="cb-col cb-col-40")
             team = team_info.text.strip() if team_info else "Unknown Team"
-            logger.debug(f"Extracted team from page for {name}: {team}")
         
         # Get player role
         role = get_player_role(soup)
-        logger.debug(f"Got player role: {role}")
         
         # Find performance tables
         tables = soup.find_all('table', class_='table cb-col-100 cb-plyr-thead')
-        logger.debug(f"Found {len(tables)} stats tables")
         
         # Initialize with default values based on role (no randomness)
         if role == "BAT":
@@ -174,7 +148,6 @@ def get_player_stats(player_url, team_mapping=None):
         
         # Try to extract real stats from tables
         if tables and len(tables) >= 2:
-            logger.debug("Attempting to extract batting and bowling stats from tables")
             try:
                 # Extract batting stats
                 batting_rows = tables[0].find_all('tr')
@@ -202,11 +175,9 @@ def get_player_stats(player_url, team_mapping=None):
                                 boundary_percent = ((fours + sixes) / balls_faced) * 100
                             else:
                                 boundary_percent = 0
-                                
-                            logger.debug(f"Extracted batting stats: M={matches_played}, Inn={innings}, Runs={runs}, BF={balls_faced}, Avg={batting_avg}, SR={strike_rate}, 50s={batting_50s}, 100s={batting_100s}, 4s={fours}, 6s={sixes}")
                             break
-                        except (ValueError, IndexError) as e:
-                            logger.debug(f"Error extracting batting stats: {e}")
+                        except (ValueError, IndexError):
+                            pass
                 
                 # Extract bowling stats
                 bowling_rows = tables[1].find_all('tr')
@@ -233,13 +204,11 @@ def get_player_stats(player_url, team_mapping=None):
                                 dot_percent = max(0, min(100, 100 - (estimated_scoring_balls / balls_bowled * 100)))
                             else:
                                 dot_percent = 0
-                                
-                            logger.debug(f"Extracted bowling stats: M={bowling_matches}, Inn={bowling_innings}, B={balls_bowled}, Runs={runs_conceded}, Wkts={wickets}, Avg={bowling_avg}, Econ={economy}, SR={bowling_sr}")
                             break
-                        except (ValueError, IndexError) as e:
-                            logger.debug(f"Error extracting bowling stats: {e}")
-            except Exception as e:
-                logger.error(f"Error parsing tables for {name}: {e}")
+                        except (ValueError, IndexError):
+                            pass
+            except Exception:
+                pass
         
         # Recent form - try to extract from page or use actual data
         form_text = soup.find('div', string='Last 5 Matches')
@@ -265,7 +234,6 @@ def get_player_stats(player_url, team_mapping=None):
                 
                 if recent_form_scores:
                     recent_form = sum(recent_form_scores) / len(recent_form_scores)
-                    logger.debug(f"Extracted recent form: {recent_form} from scores: {recent_form_scores}")
         
         # Calculate consistency factor based on standard deviation of recent performance
         consistency = 0.75  # Default value rather than random
@@ -280,7 +248,6 @@ def get_player_stats(player_url, team_mapping=None):
                     # Higher consistency for lower coefficient of variation (std/mean)
                     cv = std_dev / mean
                     consistency = max(0.4, min(0.95, 1 - (cv / 2)))
-                    logger.debug(f"Calculated consistency: {consistency} from CV: {cv}")
         
         # Calculate venue adaptability based on actual performance data
         venue_adaptability = 0.8  # Default value rather than random
@@ -326,16 +293,18 @@ def get_player_stats(player_url, team_mapping=None):
             "Venue Adaptability": venue_adaptability,
             "Cost": cost
         }
-        print('--------------------------------')
-        print(player_data)
-        print('--------------------------------')
-        logger.info(f"Successfully got stats for {name} ({role}) in {time.time() - start_time:.2f}s")
+        
+        if ENABLE_DEBUG_OUTPUT:
+            print('--------------------------------')
+            print(player_data)
+            print('--------------------------------')
+            
         return player_data
         
     except Exception as e:
-        logger.error(f"Web scraping failed for {player_url}: {e}")
-        logger.info("Falling back to default player data")
-        
+        if ENABLE_DEBUG_OUTPUT:
+            print(f"Web scraping failed for {player_url}: {e}")
+            
         # Generate player data with reasonable defaults
         player_name = player_url.split('/')[-1].replace('-', ' ').title()
         name_hash = sum(ord(c) for c in player_name.lower())
@@ -410,136 +379,189 @@ def get_player_stats(player_url, team_mapping=None):
             "Venue Adaptability": 0.80,  # Default adaptability
             "Cost": 8   # Default middle cost
         }
-        logger.info(f"Created default player: {player_name} ({role})")
         return player_data
 
 # Step 1: Fetch Upcoming Match Players
 def get_upcoming_match_players():
-    logger.info("Fetching upcoming match players...")
+    """Fetch upcoming match players"""
     start_time = time.time()
     
-    url = "https://www.cricbuzz.com/cricket-series/9237/indian-premier-league-2025/matches"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    logger.debug(f"Sending request to: {url}")
-    response = requests.get(url, headers=headers)
-    logger.debug(f"Response status code: {response.status_code}")
+    # Team name mapping dictionary - full names to abbreviations
+    team_name_mapper = {
+        'Chennai Super Kings': 'CSK',
+        'Royal Challengers Bengaluru': 'RCB',
+        'Mumbai Indians': 'MI',
+        'Kolkata Knight Riders': 'KKR',
+        'Sunrisers Hyderabad': 'SRH',
+        'Delhi Capitals': 'DC',
+        'Punjab Kings': 'PBKS',
+        'Rajasthan Royals': 'RR',
+        'Lucknow Super Giants': 'LSG',
+        'Gujarat Titans': 'GT'
+    }
     
-    soup = BeautifulSoup(response.content, "html.parser")
-    logger.debug("Parsing response content with BeautifulSoup")
-    
-    # cb-text-preview
-    # cb-text-toss
-    # cb-text-inprogress
-    match_links = soup.find_all("a", class_="cb-text-inprogress")
-    logger.debug(f"Found {len(match_links)} upcoming matches with cb-text-preview class")
-    
-    if not match_links:
-        logger.warning("No upcoming matches found")
-        print("No upcoming matches found")
-        return [], {}, "Unknown"
-    
-    # Extract toss winner from the link text
-    toss_info = match_links[0].text.strip()
-    logger.info(f"Found toss info: {toss_info}")
-    toss_winner = "Unknown"
-    
-    if "opt to" in toss_info:
-        # Format is typically "Team Name opt to bowl/bat"
-        toss_winner = toss_info.split(" opt to")[0].strip()
-        logger.info(f"Extracted toss winner from link: {toss_winner}")
-    
-    match_url = "https://www.cricbuzz.com" + match_links[0]["href"]
-    # https://www.cricbuzz.com/live-cricket-scores/114996/rr-vs-kkr-6th-match-indian-premier-league-2025
-    # https://www.cricbuzz.com/cricket-match-squads/114996/rr-vs-kkr-6th-match-indian-premier-league-2025
-    match_url = match_url.replace("live-cricket-scores", "cricket-match-squads")
-    logger.info(f"Selected match URL: {match_url}")
-    
-    # print(match_url)
-    logger.debug(f"Sending request to match URL: {match_url}")
-    response = requests.get(match_url, headers=headers)
-    logger.debug(f"Match URL response status code: {response.status_code}")
-    
-    soup = BeautifulSoup(response.content, "html.parser")
-    logger.debug("Parsing match page content with BeautifulSoup")
-    
-    # Extract team names using the specified classes
-    team1_element = soup.select_one(".cb-team1 div:last-child")
-    team2_element = soup.select_one(".cb-team2 div:last-child") 
-    
-    team1 = team1_element.text.strip() if team1_element else "Team1"
-    team2 = team2_element.text.strip() if team2_element else "Team2"
-    
-    logger.info(f"Found teams: {team1} vs {team2}")
-    print(f"Match: {team1} vs {team2}")
-    
-    # Ensure toss winner matches one of the teams
-    if toss_winner != "Unknown":
-        # Check if toss_winner closely matches team1 or team2
-        if team1.lower() in toss_winner.lower() or toss_winner.lower() in team1.lower():
-            toss_winner = team1
-            logger.info(f"Matched toss winner to team1: {toss_winner}")
-        elif team2.lower() in toss_winner.lower() or toss_winner.lower() in team2.lower():
-            toss_winner = team2
-            logger.info(f"Matched toss winner to team2: {toss_winner}")
+    try:
+        url = "https://www.cricbuzz.com/cricket-series/9237/indian-premier-league-2025/matches"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        # cb-text-preview
+        # cb-text-toss
+        # cb-text-inprogress
+        match_links = soup.find_all("a", class_="cb-text-inprogress")
+        
+        if not match_links:
+            print("No upcoming matches found. Using fallback data.")
+            return get_fallback_match_data()
+        
+        # Extract toss winner from the link text
+        toss_info = match_links[0].text.strip()
+        if ENABLE_DEBUG_OUTPUT:
+            print(f"Found toss info: {toss_info}")
+            
+        toss_winner = "Unknown"
+        
+        if "opt to" in toss_info:
+            # Format is typically "Team Name opt to bowl/bat"
+            toss_winner = toss_info.split(" opt to")[0].strip()
+            if ENABLE_DEBUG_OUTPUT:
+                print(f"Extracted toss winner from link: {toss_winner}")
+        
+        match_url = "https://www.cricbuzz.com" + match_links[0]["href"]
+        match_url = match_url.replace("live-cricket-scores", "cricket-match-squads")
+        
+        response = requests.get(match_url, headers=headers)
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        # Extract team names using the specified classes
+        team1_element = soup.select_one(".cb-team1 div:last-child")
+        team2_element = soup.select_one(".cb-team2 div:last-child") 
+        
+        team1 = team1_element.text.strip() if team1_element else "Team1"
+        team2 = team2_element.text.strip() if team2_element else "Team2"
+        
+        print(f"Match: {team1} vs {team2}")
+        
+        # Ensure toss winner matches one of the teams using the mapper
+        if toss_winner != "Unknown":
+            # Check if toss_winner is a key in the mapper
+            toss_winner_abbr = None
+            for full_name, abbr in team_name_mapper.items():
+                if full_name.lower() == toss_winner.lower() or full_name.lower() in toss_winner.lower() or toss_winner.lower() in full_name.lower():
+                    toss_winner_abbr = abbr
+                    break
+            
+            # If we found a valid mapping, check if it matches team1 or team2
+            if toss_winner_abbr:
+                if team1.upper() == toss_winner_abbr.upper():
+                    toss_winner = team1
+                elif team2.upper() == toss_winner_abbr.upper():
+                    toss_winner = team2
+                else:
+                    # If neither matches, choose randomly
+                    toss_winner = random.choice([team1, team2])
+            else:
+                # Check for direct match without using mapper
+                if team1.lower() in toss_winner.lower() or toss_winner.lower() in team1.lower():
+                    toss_winner = team1
+                elif team2.lower() in toss_winner.lower() or toss_winner.lower() in team2.lower():
+                    toss_winner = team2
+                else:
+                    # If no match found, choose one randomly
+                    toss_winner = random.choice([team1, team2])
         else:
-            # If no match found, choose one randomly
-            logger.warning(f"Toss winner '{toss_winner}' doesn't match any team name. Choosing randomly.")
+            # If toss winner is still unknown, pick one of the teams randomly
             toss_winner = random.choice([team1, team2])
-            logger.info(f"Randomly selected toss winner: {toss_winner}")
-    else:
-        # If toss winner is still unknown, pick one of the teams randomly
-        toss_winner = random.choice([team1, team2])
-        logger.info(f"No clear toss winner found, randomly selected: {toss_winner}")
-    
-    # Get the first cb-play11-lft-col and cb-play11-rt-col divs
-    left = soup.find("div", class_="cb-play11-lft-col")
-    right = soup.find("div", class_="cb-play11-rt-col")
-    logger.debug(f"Found left squad column: {left is not None}")
-    logger.debug(f"Found right squad column: {right is not None}")
+        
+        # Get the first cb-play11-lft-col and cb-play11-rt-col divs
+        left = soup.find("div", class_="cb-play11-lft-col")
+        right = soup.find("div", class_="cb-play11-rt-col")
 
-    # Extract <a> tags with class "cb-col-100" from both divs
-    player_profiles = []
+        # Extract <a> tags with class "cb-col-100" from both divs
+        player_profiles = []
+        team_mapping = {}
+        
+        if left:
+            left_links = left.find_all("a", class_="cb-col-100")
+            player_profiles.extend(left_links)
+            # Map these players to team1
+            for link in left_links:
+                if link.get("href") and "/profiles/" in link["href"]:
+                    player_id = link["href"].split("/")[-1]
+                    team_mapping[player_id] = team1
+        
+        if right:
+            right_links = right.find_all("a", class_="cb-col-100")
+            player_profiles.extend(right_links)
+            # Map these players to team2
+            for link in right_links:
+                if link.get("href") and "/profiles/" in link["href"]:
+                    player_id = link["href"].split("/")[-1]
+                    team_mapping[player_id] = team2
+        
+        player_urls = []
+        for p in player_profiles:
+            if p.get("href") and "/profiles/" in p["href"]:
+                player_url = "https://www.cricbuzz.com" + p["href"]
+                player_urls.append(player_url)
+        
+        # Deduplicate and limit to 22 players
+        unique_urls = list(set(player_urls))
+        final_urls = unique_urls[:22]
+        
+        print(f"Found {len(final_urls)} players, toss winner: {toss_winner}")
+        
+        return final_urls, team_mapping, toss_winner
+    
+    except Exception as e:
+        print(f"Error fetching match data: {e}")
+        return get_fallback_match_data()
+
+def get_fallback_match_data():
+    """Provide fallback data when API calls fail"""
+    print("Using fallback match data")
+    
+    team1 = "PBKS"
+    team2 = "RR"
+    toss_winner = team1
+    
+    # Add your player URLs here - these are from your script
+    player_urls = [
+        "https://www.cricbuzz.com/profiles/7910/yuzvendra-chahal",
+        "https://www.cricbuzz.com/profiles/8356/sandeep-sharma",
+        "https://www.cricbuzz.com/profiles/8989/marcus-stoinis",
+        "https://www.cricbuzz.com/profiles/9204/nitish-rana",
+        "https://www.cricbuzz.com/profiles/8271/sanju-samson",
+        "https://www.cricbuzz.com/profiles/9428/shreyas-iyer",
+        "https://www.cricbuzz.com/profiles/13217/arshdeep-singh",
+        "https://www.cricbuzz.com/profiles/10692/lockie-ferguson",
+        "https://www.cricbuzz.com/profiles/7662/glenn-maxwell",
+        "https://www.cricbuzz.com/profiles/10926/wanindu-hasaranga",
+        "https://www.cricbuzz.com/profiles/13940/yashasvi-jaiswal",
+        "https://www.cricbuzz.com/profiles/9789/shimron-hetmyer",
+        "https://www.cricbuzz.com/profiles/14565/marco-jansen",
+        "https://www.cricbuzz.com/profiles/11540/jofra-archer",
+        "https://www.cricbuzz.com/profiles/12305/riyan-parag",
+        "https://www.cricbuzz.com/profiles/10919/shashank-singh",
+        "https://www.cricbuzz.com/profiles/13915/nehal-wadhera",
+        "https://www.cricbuzz.com/profiles/14254/prabhsimran-singh",
+        "https://www.cricbuzz.com/profiles/14691/dhruv-jurel",
+        "https://www.cricbuzz.com/profiles/18504/maheesh-theekshana",
+        "https://www.cricbuzz.com/profiles/14922/suryansh-shedge",
+        "https://www.cricbuzz.com/profiles/15749/yudhvir-singh-charak"
+    ]
+    
+    # Create team mapping
     team_mapping = {}
+    # Map first half to team1, second half to team2
+    half = len(player_urls) // 2
+    for i, url in enumerate(player_urls):
+        player_id = url.split('/')[-1]
+        team_mapping[player_id] = team1 if i < half else team2
     
-    if left:
-        left_links = left.find_all("a", class_="cb-col-100")
-        logger.debug(f"Found {len(left_links)} player links in left column")
-        player_profiles.extend(left_links)
-        # Map these players to team1
-        for link in left_links:
-            if link.get("href") and "/profiles/" in link["href"]:
-                player_id = link["href"].split("/")[-1]
-                team_mapping[player_id] = team1
-    
-    if right:
-        right_links = right.find_all("a", class_="cb-col-100")
-        logger.debug(f"Found {len(right_links)} player links in right column")
-        player_profiles.extend(right_links)
-        # Map these players to team2
-        for link in right_links:
-            if link.get("href") and "/profiles/" in link["href"]:
-                player_id = link["href"].split("/")[-1]
-                team_mapping[player_id] = team2
-    
-    logger.debug(f"Total player profiles found: {len(player_profiles)}")
-    
-    player_urls = []
-    for p in player_profiles:
-        if p.get("href") and "/profiles/" in p["href"]:
-            player_url = "https://www.cricbuzz.com" + p["href"]
-            player_urls.append(player_url)
-    
-    logger.debug(f"Extracted {len(player_urls)} player URLs from profiles")
-    
-    # Deduplicate and limit to 22 players
-    unique_urls = list(set(player_urls))
-    logger.debug(f"After deduplication: {len(unique_urls)} unique player URLs")
-    
-    final_urls = unique_urls[:22]
-    logger.info(f"Final player count: {len(final_urls)} (limited to max 22)")
-    logger.info(f"Player URLs retrieval completed in {time.time() - start_time:.2f}s")
-    
-    return final_urls, team_mapping, toss_winner
+    return player_urls, team_mapping, toss_winner
 
 def generate_dream11_team(df, toss_winner="PBKS"):
     """Generate a balanced Dream11 team using the player data"""
@@ -845,108 +867,60 @@ def generate_dream11_team(df, toss_winner="PBKS"):
     }
 
 def save_to_csv(teams, df):
-    """Save teams to a single consolidated log file with nice formatting"""
+    """Print team information to console instead of saving to file"""
     try:
-        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        team_logs_dir = "team_logs"
-        
-        # Create team_logs directory if it doesn't exist
-        if not os.path.exists(team_logs_dir):
-            os.makedirs(team_logs_dir)
-        
-        # Create a single consolidated log file for all teams
-        consolidated_log_file = os.path.join(team_logs_dir, f"all_teams_{current_time}.txt")
-        logger.info(f"Creating consolidated log file: {consolidated_log_file}")
-        
-        with open(consolidated_log_file, 'w') as log_file:
-            log_file.write(f"====== DREAM11 TEAMS GENERATED ON {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ======\n\n")
+        # Format and print team information
+        print(f"\n====== DREAM11 TEAMS GENERATED ON {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ======\n")
+        # Write a summary of all teams firs
+        print("\n")
+        # Write detailed information for each team
+        for i, team in enumerate(teams):
+            print(f"===== DREAM11 TEAM {i+1} =====\n")
+            print(f"{'NAME':<25} {'ROLE':<6} {'TEAM':<15} {'PRED SCORE':<12} {'COST':<6}")
+            print("-" * 70)
             
-            # Write a summary of all teams first
-            log_file.write("TEAMS SUMMARY:\n")
-            log_file.write(f"{'TEAM':<5} {'CAPTAIN':<25} {'VICE CAPTAIN':<25} {'POINTS':<10} {'WK':<4} {'BAT':<4} {'AR':<4} {'BOWL':<4}\n")
-            log_file.write("-" * 90 + "\n")
+            # Convert team to DataFrame for sorting
+            team_df = pd.DataFrame(team['team'])
+            team_df = team_df.sort_values('Final_Score', ascending=False)
             
-            for i, team in enumerate(teams):
-                player_roles = [p['Role'] for p in team['team']]
-                log_file.write(f"{i+1:<5} {team['captain']:<25} {team['vice_captain']:<25} {team['total_points']:<10} "
-                               f"{sum(1 for r in player_roles if r == 'WK'):<4} "
-                               f"{sum(1 for r in player_roles if r == 'BAT'):<4} "
-                               f"{sum(1 for r in player_roles if r == 'AR'):<4} "
-                               f"{sum(1 for r in player_roles if r == 'BOWL'):<4}\n")
+            for _, player in team_df.iterrows():
+                is_captain = player['Name'] == team['captain']
+                is_vc = player['Name'] == team['vice_captain']
+                
+                # Add (C) for captain and (VC) for vice-captain
+                name_display = f"{player['Name']} (C)" if is_captain else (f"{player['Name']} (VC)" if is_vc else player['Name'])
+                
+                line = f"{name_display:<25} {player['Role']:<6} {player['Team']:<15} {player['Final_Score']:<12.2f} {player['Cost']:<6}"
+                print(line)
             
-            log_file.write("\n\n")
-            
-            # Write detailed information for each team
-            for i, team in enumerate(teams):
-                log_file.write(f"===== DREAM11 TEAM {i+1} =====\n\n")
-                log_file.write(f"Captain: {team['captain']}\n")
-                log_file.write(f"Vice Captain: {team['vice_captain']}\n")
-                log_file.write(f"Total Points Used: {team['total_points']}\n\n")
-                
-                log_file.write("ROLE DISTRIBUTION:\n")
-                log_file.write(f"WK: {sum(1 for p in team['team'] if p['Role'] == 'WK')}\n")
-                log_file.write(f"BAT: {sum(1 for p in team['team'] if p['Role'] == 'BAT')}\n")
-                log_file.write(f"AR: {sum(1 for p in team['team'] if p['Role'] == 'AR')}\n")
-                log_file.write(f"BOWL: {sum(1 for p in team['team'] if p['Role'] == 'BOWL')}\n\n")
-                
-                log_file.write("PLAYERS:\n")
-                log_file.write(f"{'NAME':<25} {'ROLE':<6} {'TEAM':<15} {'PRED SCORE':<12} {'COST':<6}\n")
-                log_file.write("-" * 70 + "\n")
-                
-                # Convert team to DataFrame for sorting
-                team_df = pd.DataFrame(team['team'])
-                team_df = team_df.sort_values('Final_Score', ascending=False)
-                
-                for _, player in team_df.iterrows():
-                    is_captain = player['Name'] == team['captain']
-                    is_vc = player['Name'] == team['vice_captain']
-                    
-                    # Add (C) for captain and (VC) for vice-captain
-                    name_display = f"{player['Name']} (C)" if is_captain else (f"{player['Name']} (VC)" if is_vc else player['Name'])
-                    
-                    line = f"{name_display:<25} {player['Role']:<6} {player['Team']:<15} {player['Final_Score']:<12.2f} {player['Cost']:<6}\n"
-                    log_file.write(line)
-                
-                log_file.write("\n" + "=" * 80 + "\n\n")
+            print("\n" + "=" * 80 + "\n")
         
-        logger.info(f"All teams saved to consolidated log file: {consolidated_log_file}")
-        print(f"\nAll teams saved to: {consolidated_log_file}")
-        
-        # Print preview of first team
-        print("\nPREVIEW OF TEAM 1:")
-        print(f"Captain: {teams[0]['captain']}")
-        print(f"Vice Captain: {teams[0]['vice_captain']}")
-        print(f"Total Points Used: {teams[0]['total_points']}")
-        print("\nPlayers:")
-        team_df = pd.DataFrame(teams[0]['team'])
-        team_df = team_df.sort_values('Final_Score', ascending=False)
-        team_df = team_df[['Name', 'Role', 'Team', 'Final_Score', 'Cost']]
-        team_df.columns = ['Name', 'Role', 'Team', 'Score', 'Cost']
-        print(team_df.to_string(index=False))
-        
-        return consolidated_log_file
+        print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
+        return True
     except Exception as e:
-        logger.error(f"Error saving team logs: {e}")
+        print(f"Error displaying team data: {e}")
         import traceback
-        logger.error(traceback.format_exc())
-        return None
+        print(traceback.format_exc())
+        return False
 
 def main():
     try:
-        logger.info("====== STARTING DREAM11 TEAM GENERATION ======")
-        logger.info(f"Timestamp: {datetime.now()}")
+        print("====== STARTING DREAM11 TEAM GENERATION ======")
+        print(f"Timestamp: {datetime.now()}")
         
+        global start_time
         start_time = time.time()
         
         # Get player data with web scraping and fallback
+        print("Fetching upcoming match players...")
         player_urls, team_mapping, toss_winner = get_upcoming_match_players()
         if not player_urls:
-            logger.error("No players found. Exiting...")
+            print("No players found. Exiting...")
             return
         
-        logger.info(f"Using {toss_winner} as toss winner")
+        print(f"Using {toss_winner} as toss winner")
         
-        logger.info(f"Fetching stats for {len(player_urls)} players...")
+        print(f"Fetching stats for {len(player_urls)} players...")
         data = []
         for url in player_urls:
             player_data = get_player_stats(url, team_mapping)
@@ -956,18 +930,13 @@ def main():
         df = pd.DataFrame(data)
         
         if df.empty:
-            logger.error("No valid player data found. Exiting...")
+            print("No valid player data found. Exiting...")
             return
         
-        logger.info(f"Processed {len(df)} players successfully in {time.time() - start_time:.2f} seconds")
-        
-        # Log player costs and roles
-        role_distribution = df['Role'].value_counts().to_dict()
-        logger.info(f"Role distribution in data: {role_distribution}")
-        logger.info(f"Player cost range: min={df['Cost'].min()}, max={df['Cost'].max()}, avg={df['Cost'].mean():.2f}")
+        print(f"Processed {len(df)} players successfully")
         
         # Feature engineering and prediction model
-        logger.info("Training prediction model with enhanced features...")
+        print("Training prediction model with enhanced features...")
         
         # Create more sophisticated form score using multiple features
         df["Batting Score"] = (
@@ -1044,33 +1013,18 @@ def main():
         max_score = df["Predicted Score"].max()
         df["Predicted Score"] = 50 + 50 * (df["Predicted Score"] - min_score) / (max_score - min_score)
         
-        # Log feature importances
-        feature_importances = sorted(zip(feature_cols, model.feature_importances_), 
-                                    key=lambda x: x[1], reverse=True)
-        logger.info("Feature importances:")
-        for feature, importance in feature_importances[:5]:  # Top 5 features
-            logger.info(f"  {feature}: {importance:.4f}")
-        
-        logger.info("Enhanced prediction model training completed")
-        
-        # Log top predicted players
-        top_players = df.nlargest(5, 'Predicted Score')
-        logger.info("Top 5 players by predicted score:")
-        for _, player in top_players.iterrows():
-            logger.info(f"  {player['Name']} ({player['Role']}): {player['Predicted Score']:.2f}")
-        
-        # Print player data in a more readable format
-        print("\n=== PLAYER DATA ===")
-        print(f"{'NAME':<25} {'ROLE':<6} {'TEAM':<15} {'PRED SCORE':<12} {'COST':<6}")
-        print("-" * 70)
-        sorted_players = df.sort_values('Predicted Score', ascending=False)
-        for _, player in sorted_players.iterrows():
-            print(f"{player['Name']:<25} {player['Role']:<6} {player['Team']:<15} {player['Predicted Score']:<12.2f} {player['Cost']:<6}")
-        print("\n")
+        # Only show player data table if debug output is enabled
+        if ENABLE_DEBUG_OUTPUT:
+            print("\n=== PLAYER DATA ===")
+            print(f"{'NAME':<25} {'ROLE':<6} {'TEAM':<15} {'PRED SCORE':<12} {'COST':<6}")
+            print("-" * 70)
+            sorted_players = df.sort_values('Predicted Score', ascending=False)
+            for _, player in sorted_players.iterrows():
+                print(f"{player['Name']:<25} {player['Role']:<6} {player['Team']:<15} {player['Predicted Score']:<12.2f} {player['Cost']:<6}")
+            print("\n")
         
         # Generate teams
-        teams = []
-        logger.info(f"Generating {NUM_TEAMS_TO_GENERATE} teams...")
+        print(f"Generating {NUM_TEAMS_TO_GENERATE} teams...")
         teams = []
         team_hashes = set()  # Keep track of team hashes to ensure uniqueness
         attempts = 0
@@ -1079,7 +1033,6 @@ def main():
         while len(teams) < NUM_TEAMS_TO_GENERATE and attempts < max_attempts:
             try:
                 attempts += 1
-                logger.info(f"Generating team attempt {attempts}...")
                 team = generate_dream11_team(df, toss_winner)
                 
                 # Create a hash of the team based on player names
@@ -1090,41 +1043,17 @@ def main():
                 if team_hash not in team_hashes:
                     team_hashes.add(team_hash)
                     teams.append(team)
-                    
-                    logger.info(f"Team {len(teams)} generated (unique):")
-                    logger.info(f"Players ({len(team['team'])}): {[p['Name'] for p in team['team']]}")
-                    logger.info(f"Captain: {team['captain']}")
-                    logger.info(f"Vice Captain: {team['vice_captain']}")
-                    logger.info(f"Total Points Used: {team['total_points']}")
-                else:
-                    logger.info("Generated duplicate team, trying again...")
             except Exception as e:
-                logger.error(f"Error generating team: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                print(f"Error generating team: {e}")
         
-        logger.info(f"Successfully generated {len(teams)} unique teams after {attempts} attempts")
-        
-        # Save teams to a single consolidated log file
+        # Save teams to console output
         if teams:
-            try:
-                log_file = save_to_csv(teams, df)
-                if log_file:
-                    logger.info(f"Teams saved successfully to {log_file}")
-                
-                logger.info(f"Total execution time: {time.time() - start_time:.2f} seconds")
-                print(f"\nTotal execution time: {time.time() - start_time:.2f} seconds")
-                logger.info(f"Application log file saved to: {log_file}")
-                print(f"Application log file saved to: {log_file}")
-            except Exception as e:
-                logger.error(f"Error saving teams: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+            save_to_csv(teams, df)
     
     except Exception as e:
-        logger.error(f"An unhandled error occurred: {e}")
+        print(f"An unhandled error occurred: {e}")
         import traceback
-        logger.error(traceback.format_exc())
+        print(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
