@@ -1,9 +1,7 @@
-name: Daily Dream11 Team Generation
+name: Generate Dream11 Teams
 
 on:
-  schedule:
-    - cron: '0 13 30 * *'  # Runs at 7 PM IST (adjust based on your timezone)
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:  # This allows manual triggering only
 
 jobs:
   generate-teams:
@@ -11,46 +9,32 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
       
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v3
       with:
         python-version: '3.9'
         
     - name: Install dependencies
       run: |
         python3 -m pip install --upgrade pip
-        pip3 install requests pandas numpy beautifulsoup4 scikit-learn
+        python3 -m pip install requests pandas numpy beautifulsoup4 scikit-learn
+        
+    - name: Create directories
+      run: |
+        mkdir -p logs
+        mkdir -p team_logs
         
     - name: Generate Dream11 teams
       run: python3 ge.py
       
-    - name: Create team_logs directory if it doesn't exist
-      run: mkdir -p team_logs
-      
-    - name: Commit and push team logs to repository
+    - name: Commit and push team logs
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
         git add team_logs/
-        git commit -m "Add Dream11 teams for $(date +'%Y-%m-%d')" || echo "No changes to commit"
-        git push
-      
-    # Only try to upload artifacts if files exist
-    - name: Check if team logs exist
-      id: check_files
-      run: |
-        if [ -n "$(ls -A team_logs/)" ]; then
-          echo "::set-output name=files_exist::true"
-        else
-          echo "::set-output name=files_exist::false"
-        fi
-        
-    - name: Upload team logs as artifacts
-      if: steps.check_files.outputs.files_exist == 'true'
-      uses: actions/upload-artifact@v2
-      with:
-        name: dream11-teams
-        path: team_logs/
-        retention-days: 7
+        git diff --staged --quiet || git commit -m "Add Dream11 teams for $(date +'%Y-%m-%d')"
+        git push origin HEAD:${GITHUB_REF}
