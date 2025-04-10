@@ -410,7 +410,7 @@ def get_upcoming_match_players():
         # cb-text-preview
         # cb-text-toss
         # cb-text-inprogress
-        match_links = soup.find_all("a", class_="cb-text-inprogress")
+        match_links = soup.find_all("a", class_="cb-text-toss")
         
         if not match_links:
             print("No upcoming matches found. Using fallback data.")
